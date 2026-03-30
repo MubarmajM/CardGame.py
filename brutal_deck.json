@@ -1,0 +1,12 @@
+{
+    "NAME": "BRUTAL DECK",
+    "CARDS": [
+        { "name": "Bloodlust",    "energy_cost": 1, "damage": 8,  "shield": 0, "poison": 0, "heal": 0, "quantity": 3 },
+        { "name": "Decapitate",   "energy_cost": 2, "damage": 18, "shield": 0, "poison": 0, "heal": 0, "quantity": 2 },
+        { "name": "Rampage",      "energy_cost": 2, "damage": 14, "shield": 0, "poison": 2, "heal": 0, "quantity": 2 },
+        { "name": "Venom Slash",  "energy_cost": 1, "damage": 4,  "shield": 0, "poison": 4, "heal": 0, "quantity": 2 },
+        { "name": "Frenzy",       "energy_cost": 1, "damage": 6,  "shield": 0, "poison": 2, "heal": 0, "quantity": 2 },
+        { "name": "Last Stand",   "energy_cost": 2, "damage": 0,  "shield": 0, "poison": 0, "heal": 8, "quantity": 1 },
+        { "name": "Reckless Blow","energy_cost": 1, "damage": 10, "shield": 0, "poison": 0, "heal": 0, "quantity": 2 }
+    ]
+}

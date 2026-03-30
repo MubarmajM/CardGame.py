@@ -1,0 +1,15 @@
+{
+    "NAME":"DEFAULT DECK",
+    "CARDS":[
+        { "name": "Strike",  "energy_cost": 1, "damage": 6,  "shield": 0,  "poison": 0, "heal":0, "quantity":3 },
+        { "name": "Heavy blow",  "energy_cost": 2, "damage": 12,  "shield": 0,  "poison": 0, "heal":0, "quantity":1},
+        { "name": "Block",  "energy_cost": 1, "damage": 0,  "shield": 7,  "poison": 0, "heal":0, "quantity":2 },
+        { "name": "Guard",  "energy_cost": 2, "damage": 0,  "shield": 14,  "poison": 0, "heal":0, "quantity":1 },
+        { "name": "Poision knife",  "energy_cost": 1, "damage": 2,  "shield": 0,  "poison": 3, "heal":0, "quantity":1 },
+        { "name": "Poision cloud",  "energy_cost": 2, "damage": 1,  "shield": 0,  "poison": 6, "heal":0, "quantity":1 },
+        { "name": "Soldier",  "energy_cost": 1, "damage": 3,  "shield": 3,  "poison": 0, "heal":0, "quantity":1 },
+        { "name": "Leech",  "energy_cost": 1, "damage": 2,  "shield": 0,  "poison": 1, "heal":2, "quantity":1 },
+        { "name": "Heal",  "energy_cost": 1, "damage": 0,  "shield": 0,  "poison": 0, "heal":5, "quantity":2 },
+        { "name": "Protection",  "energy_cost": 2, "damage": 0,  "shield": 7,  "poison": 0, "heal":7, "quantity":1 }
+    ]
+}
