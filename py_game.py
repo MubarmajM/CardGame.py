@@ -5,6 +5,7 @@ import argparse
 import os
 import sys
 import math
+import glob
 
 # ── Args ──────────────────────────────────────────────────────────────────────
 parser = argparse.ArgumentParser()
@@ -12,31 +13,20 @@ parser.add_argument('-d', '--deck', type=str, help='Use a custom deck')
 parser.add_argument('-hp', '--health', type=int, help='Starting health')
 args = parser.parse_args()
 
-if args.deck:
-    if os.path.exists(args.deck):
-        deck = args.deck
-    else:
-        print(f"Deck file {args.deck} doesn't exist!")
-        deck = "default_deck.json"
-else:
-    deck = "default_deck.json"
-
-if args.health:
-    DEFAULT_HEALTH = args.health
-else:
-    DEFAULT_HEALTH = 30
+DEFAULT_HEALTH     = args.health if args.health else 30
+selected_deck_path = None
+if args.deck and os.path.exists(args.deck):
+    selected_deck_path = args.deck
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 W, H = 1280, 720
 FPS  = 60
 
-
-# Slay the Spire palette
 C_BG         = (15,  10,  25)
 C_PANEL      = (28,  22,  45)
 C_PANEL2     = (38,  30,  60)
-C_ACCENT     = (200, 160,  60)   # gold
-C_ACCENT2    = (140,  90, 220)   # purple
+C_ACCENT     = (200, 160,  60)
+C_ACCENT2    = (140,  90, 220)
 C_RED        = (200,  60,  60)
 C_GREEN      = (60,  180,  80)
 C_BLUE       = (60,  140, 200)
@@ -63,9 +53,14 @@ class Card:
         self.poison      = poison
         self.heal        = heal
 
-# ── Load deck ─────────────────────────────────────────────────────────────────
-with open(deck, "r") as f:
-    DECK_JSON  = json.load(f)
+# ── Deck helpers ──────────────────────────────────────────────────────────────
+DECK_JSON  = {}
+deck_cards = []
+
+def load_deck(path):
+    global DECK_JSON, deck_cards
+    with open(path, "r") as f:
+        DECK_JSON = json.load(f)
     deck_cards = []
     for c in DECK_JSON["CARDS"]:
         for _ in range(c.get("quantity", 1)):
@@ -77,6 +72,46 @@ with open(deck, "r") as f:
                 c.get("poison",      0),
                 c.get("heal",        0),
             ))
+
+def get_all_decks():
+    paths = sorted(glob.glob("decks/*.json"))
+    decks = []
+    for path in paths:
+        try:
+            with open(path, "r") as f:
+                data = json.load(f)
+            decks.append({
+                "path":       path,
+                "name":       data.get("NAME", os.path.basename(path)),
+                "card_count": sum(c.get("quantity", 1) for c in data.get("CARDS", [])),
+                "cards":      data.get("CARDS", []),
+            })
+        except:
+            pass
+    return decks
+
+def get_deck_image(deck_path):
+    deck_name = os.path.splitext(os.path.basename(deck_path))[0]
+    img_path  = os.path.join("decks", "img", f"{deck_name}.jpg")
+    fallback  = os.path.join("decks", "img", "default_deck.jpg")
+    try:
+        if os.path.exists(img_path):
+            return pygame.image.load(img_path).convert()
+        elif os.path.exists(fallback):
+            return pygame.image.load(fallback).convert()
+    except:
+        pass
+    return None
+
+# ── Apply damage helper ───────────────────────────────────────────────────────
+def apply_damage(damage, enemy_health, enemy_shield):
+    if damage >= 0:
+        new_health = enemy_health - max(0, damage - enemy_shield)
+        new_shield = max(0, enemy_shield - damage)
+    else:
+        new_health = enemy_health + abs(damage)
+        new_shield = enemy_shield
+    return new_health, new_shield
 
 # ── AI ────────────────────────────────────────────────────────────────────────
 def ai_choose_card(ai_cards, player_health, ai_health, card_to_play, ai_mode="defensive"):
@@ -116,11 +151,11 @@ def ai_choose_card(ai_cards, player_health, ai_health, card_to_play, ai_mode="de
         has_dmg  = best_dmg.damage > 0
         has_psn  = best_psn.poison > 0
         if has_dmg or has_psn:
-            if   best_dmg.damage >= player_health:                    chosen = best_dmg
-            elif best_psn.poison >= player_health:                    chosen = best_psn
-            elif has_dmg and best_dmg.damage >= best_psn.poison:      chosen = best_dmg
-            elif has_psn:                                              chosen = best_psn
-            else:                                                      chosen = best_dmg
+            if   best_dmg.damage >= player_health:               chosen = best_dmg
+            elif best_psn.poison >= player_health:               chosen = best_psn
+            elif has_dmg and best_dmg.damage >= best_psn.poison: chosen = best_dmg
+            elif has_psn:                                        chosen = best_psn
+            else:                                                chosen = best_dmg
             if chosen.energy_cost <= ai_energy:
                 ai_card_to_play.append(chosen)
                 ai_cards.remove(chosen)
@@ -148,7 +183,7 @@ def ai_choose_card(ai_cards, player_health, ai_health, card_to_play, ai_mode="de
             break
     return ai_card_to_play
 
-# ── Pygame helpers ────────────────────────────────────────────────────────────
+# ── Pygame init ───────────────────────────────────────────────────────────────
 pygame.init()
 screen = pygame.display.set_mode((W, H))
 pygame.display.set_caption("Card Duel")
@@ -157,13 +192,13 @@ clock  = pygame.time.Clock()
 def load_fonts():
     try:
         return {
-            "title":  pygame.font.SysFont("Georgia",        32, bold=True),
-            "card":   pygame.font.SysFont("Georgia",        16, bold=True),
-            "stat":   pygame.font.SysFont("Consolas",       14),
-            "small":  pygame.font.SysFont("Consolas",       12),
-            "big":    pygame.font.SysFont("Georgia",        48, bold=True),
-            "medium": pygame.font.SysFont("Georgia",        22, bold=True),
-            "info":   pygame.font.SysFont("Consolas",       15),
+            "title":  pygame.font.SysFont("Georgia",  32, bold=True),
+            "card":   pygame.font.SysFont("Georgia",  16, bold=True),
+            "stat":   pygame.font.SysFont("Consolas", 14),
+            "small":  pygame.font.SysFont("Consolas", 12),
+            "big":    pygame.font.SysFont("Georgia",  48, bold=True),
+            "medium": pygame.font.SysFont("Georgia",  22, bold=True),
+            "info":   pygame.font.SysFont("Consolas", 15),
         }
     except:
         f = pygame.font.Font(None, 20)
@@ -171,12 +206,13 @@ def load_fonts():
 
 fonts = load_fonts()
 
+# ── Draw helpers ──────────────────────────────────────────────────────────────
 def draw_text(surf, text, font_key, color, x, y, center=False, right=False):
     s = fonts[font_key].render(str(text), True, color)
     r = s.get_rect()
-    if center: r.centerx = x; r.top    = y
-    elif right: r.right  = x; r.top    = y
-    else:       r.left   = x; r.top    = y
+    if center: r.centerx = x; r.top  = y
+    elif right: r.right  = x; r.top  = y
+    else:       r.left   = x; r.top  = y
     surf.blit(s, r)
     return r
 
@@ -195,6 +231,14 @@ def draw_bar(surf, x, y, w, h, value, max_val, bg, fg, label="", radius=6):
     if label:
         draw_text(surf, label, "small", C_WHITE, x + w//2, y + h//2 - 6, center=True)
 
+def draw_button(surf, text, x, y, w, h, hovered=False, disabled=False):
+    col    = C_GRAY   if disabled else (C_ACCENT2 if hovered else C_PANEL2)
+    border = C_GRAY   if disabled else (C_WHITE   if hovered else C_ACCENT2)
+    draw_rounded_rect(surf, col, (x, y, w, h), 8, 2, border)
+    tcol = C_GRAY if disabled else C_WHITE
+    draw_text(surf, text, "info", tcol, x + w//2, y + h//2 - 9, center=True)
+    return pygame.Rect(x, y, w, h)
+
 # ── Card rendering ────────────────────────────────────────────────────────────
 CARD_W, CARD_H = 120, 170
 CARD_GAP       = 14
@@ -204,54 +248,40 @@ def draw_card(surf, card, x, y, hovered=False, selected=False, index=None, playa
     if not playable:
         bg = (20, 18, 32)
 
-    # shadow
-    shadow_rect = (x+4, y+4, CARD_W, CARD_H)
     shadow_surf = pygame.Surface((CARD_W, CARD_H), pygame.SRCALPHA)
     pygame.draw.rect(shadow_surf, (0,0,0,100), (0,0,CARD_W,CARD_H), border_radius=10)
     surf.blit(shadow_surf, (x+4, y+4))
 
-    # card body
     border_col = C_ACCENT if selected else (C_ACCENT2 if hovered else C_CARD_BORDER)
     draw_rounded_rect(surf, bg, (x, y, CARD_W, CARD_H), 10, 2, border_col)
-
-    # top gold strip
     pygame.draw.rect(surf, C_ACCENT if playable else C_GRAY,
                      (x+2, y+2, CARD_W-4, 4), border_radius=3)
 
-    # energy gem
     gem_x, gem_y = x + CARD_W - 22, y + 8
     pygame.draw.circle(surf, C_ACCENT2, (gem_x, gem_y), 12)
     pygame.draw.circle(surf, C_WHITE,   (gem_x, gem_y), 12, 1)
     draw_text(surf, card.energy_cost, "stat", C_WHITE, gem_x, gem_y-8, center=True)
 
-    # name
-    name = card.name[:13]
-    draw_text(surf, name, "card", C_ACCENT if playable else C_GRAY,
+    draw_text(surf, card.name[:13], "card", C_ACCENT if playable else C_GRAY,
               x + CARD_W//2, y + 18, center=True)
-
-    # divider
     pygame.draw.line(surf, C_CARD_BORDER, (x+8, y+38), (x+CARD_W-8, y+38))
 
-    # stats
     sy = y + 46
     stats = []
-    if card.damage: stats.append(("⚔", f"{card.damage}",  C_RED))
+    if card.damage: stats.append(("⚔", f"{card.damage}", C_RED))
     if card.shield: stats.append(("🛡", f"{card.shield}", C_BLUE))
     if card.poison: stats.append(("☠", f"{card.poison}", C_POISON))
     if card.heal:   stats.append(("♥", f"{card.heal}",   C_GREEN))
-
     for icon, val, col in stats:
-        draw_text(surf, icon, "stat", col, x+14, sy)
+        draw_text(surf, icon, "stat", col,     x+14, sy)
         draw_text(surf, val,  "stat", C_WHITE, x+34, sy)
         sy += 22
 
-    # index badge
     if index is not None:
         badge_x, badge_y = x+10, y+CARD_H-22
         pygame.draw.circle(surf, C_ACCENT, (badge_x, badge_y), 10)
         draw_text(surf, index+1, "small", C_DARK, badge_x, badge_y-7, center=True)
 
-    # glow when selected
     if selected:
         glow = pygame.Surface((CARD_W+16, CARD_H+16), pygame.SRCALPHA)
         pygame.draw.rect(glow, (200,160,60,40), (0,0,CARD_W+16,CARD_H+16), border_radius=14)
@@ -262,32 +292,27 @@ def draw_card(surf, card, x, y, hovered=False, selected=False, index=None, playa
 # ── Stats panel ───────────────────────────────────────────────────────────────
 def draw_stats_panel(surf, x, y, w, label, health, max_hp, shield, poison, is_player=True):
     draw_rounded_rect(surf, C_PANEL, (x, y, w, 190), 12, 1, C_CARD_BORDER)
-
     col = C_ACCENT if is_player else C_ACCENT2
     draw_text(surf, label, "medium", col, x + w//2, y+10, center=True)
 
-    # HP bar
     draw_text(surf, "HP", "small", C_GRAY, x+12, y+40)
     draw_bar(surf, x+12, y+56, w-24, 18, health, max_hp,
              C_HP_BG, C_HP_FG, f"{health}/{max_hp}")
 
-    # Shield bar
     draw_text(surf, "SHIELD", "small", C_GRAY, x+12, y+82)
-    draw_bar(surf, x+12, y+98, w-24, 14, shield, max(shield,20),
+    draw_bar(surf, x+12, y+98, w-24, 14, shield, max(shield, 20),
              C_SHIELD_BG, C_SHIELD_FG, str(shield))
 
-    # Poison
     draw_text(surf, "POISON", "small", C_GRAY, x+12, y+120)
     pcol = C_POISON if poison > 0 else C_GRAY
     draw_text(surf, f"{poison} stacks", "info", pcol, x+12, y+136)
 
-    # Numeric HP big
     draw_text(surf, str(max(0, health)), "title", C_WHITE, x + w//2, y+155, center=True)
 
 # ── Floating text ─────────────────────────────────────────────────────────────
 class FloatText:
     def __init__(self, text, x, y, color):
-        self.text  = text
+        self.text = text
         self.x, self.y = x, y
         self.color = color
         self.life  = 80
@@ -308,15 +333,6 @@ float_texts = []
 def add_float(text, x, y, color):
     float_texts.append(FloatText(text, x, y, color))
 
-# ── Button ────────────────────────────────────────────────────────────────────
-def draw_button(surf, text, x, y, w, h, hovered=False, disabled=False):
-    col    = C_GRAY if disabled else (C_ACCENT2 if hovered else C_PANEL2)
-    border = C_GRAY if disabled else (C_WHITE   if hovered else C_ACCENT2)
-    draw_rounded_rect(surf, col, (x, y, w, h), 8, 2, border)
-    tcol = C_GRAY if disabled else C_WHITE
-    draw_text(surf, text, "info", tcol, x + w//2, y + h//2 - 9, center=True)
-    return pygame.Rect(x, y, w, h)
-
 # ── Message log ───────────────────────────────────────────────────────────────
 message_log = []
 
@@ -331,6 +347,12 @@ def draw_log(surf, x, y, w, h):
     pygame.draw.line(surf, C_CARD_BORDER, (x+8, y+22), (x+w-8, y+22))
     for i, (msg, col) in enumerate(message_log[-5:]):
         draw_text(surf, msg, "small", col, x+10, y+28 + i*18)
+
+# ── Card layout ───────────────────────────────────────────────────────────────
+def get_card_positions(n, center_x, y):
+    total = n * CARD_W + (n-1) * CARD_GAP
+    start = center_x - total // 2
+    return [(start + i*(CARD_W+CARD_GAP), y) for i in range(n)]
 
 # ── Game state ────────────────────────────────────────────────────────────────
 class GameState:
@@ -350,10 +372,9 @@ class GameState:
         self.ai_cards  = []
 
         self.cards_to_play   = []
-        self.selected_cards  = []   # indices in player_cards
-        self.phase           = "player"   # player | ai | gameover
+        self.selected_cards  = []
+        self.phase           = "player"
         self.winner          = None
-        self.ai_delay        = 0
         self.ai_action_queue = []
         self.ai_action_timer = 0
 
@@ -361,6 +382,8 @@ class GameState:
             self.player_cards.append(random.choice(deck_cards))
             self.ai_cards.append(random.choice(deck_cards))
 
+        message_log.clear()
+        float_texts.clear()
         log("Battle begins!", C_ACCENT)
 
     def can_play(self, card):
@@ -383,20 +406,25 @@ class GameState:
         if action == "Draw a card":
             new = random.choice(deck_cards)
             self.ai_cards.append(new)
-            log(f"Opponent draws {new.name}", C_GRAY)
+            log("Opponent draws a card", C_GRAY)
         else:
             self.ai_cards.remove(action)
-            dmg = max(0, action.damage - self.player_shield)
-            self.player_health -= dmg
-            self.player_shield  = max(0, self.player_shield - action.damage)
+            self.player_health, self.player_shield = apply_damage(
+                action.damage, self.player_health, self.player_shield)
             self.player_poison += action.poison
             self.ai_shield     += action.shield
-            self.ai_health     += action.heal
-            if dmg > 0:
-                log(f"Opponent plays {action.name}: -{dmg} HP to you!", C_RED)
+            self.ai_health      = min(DEFAULT_HEALTH, self.ai_health + action.heal)
+
+            if action.damage > 0:
+                dmg = max(0, action.damage - self.player_shield)
+                log(f"Opponent plays {action.name}: -{dmg} HP!", C_RED)
                 add_float(f"-{dmg}", W//4, H//2, C_RED)
+            elif action.damage < 0:
+                log(f"Opponent plays {action.name}: heals you +{abs(action.damage)}!", C_GREEN)
+                add_float(f"+{abs(action.damage)}", W//4, H//2, C_GREEN)
             else:
                 log(f"Opponent plays {action.name}", C_ACCENT2)
+
             if action.poison:
                 log(f"You are poisoned! (+{action.poison})", C_POISON)
             if action.heal:
@@ -411,21 +439,26 @@ class GameState:
             if card.energy_cost <= self.player_energy:
                 self.cards_to_play.append(card)
                 self.player_energy -= card.energy_cost
-                # apply
-                self.ai_health -= max(0, card.damage - self.ai_shield)
-                self.ai_shield  = max(0, self.ai_shield - card.damage)
-                self.ai_poison += card.poison
+                self.ai_health, self.ai_shield = apply_damage(
+                    card.damage, self.ai_health, self.ai_shield)
+                self.ai_poison     += card.poison
                 self.player_shield += card.shield
-                self.player_health += card.heal
+                self.player_health  = min(DEFAULT_HEALTH, self.player_health + card.heal)
                 self.player_cards.pop(idx)
-                if card.damage:
+
+                if card.damage > 0:
                     dmg = max(0, card.damage - self.ai_shield)
                     log(f"You play {card.name}: -{dmg} HP to opponent!", C_ACCENT)
                     add_float(f"-{dmg}", 3*W//4, H//2, C_RED)
+                elif card.damage < 0:
+                    log(f"You play {card.name}: heals opponent +{abs(card.damage)}!", C_POISON)
+                    add_float(f"+{abs(card.damage)}", 3*W//4, H//2, C_GREEN)
                 else:
                     log(f"You play {card.name}", C_ACCENT)
+
                 if card.heal:
                     add_float(f"+{card.heal} HP", W//4, H//3, C_GREEN)
+
         self.selected_cards = []
         self.check_death()
 
@@ -441,11 +474,10 @@ class GameState:
 
     def end_turn(self):
         self.player_shield = 0
-        self.ai_shield     = 0
+        #self.ai_shield     = 0 
         self.cards_to_play = []
         self.selected_cards= []
 
-        # next turn poison
         self.player_health -= self.player_poison
         self.player_poison  = max(0, self.player_poison - 1)
         self.ai_health     -= self.ai_poison
@@ -466,31 +498,212 @@ class GameState:
             self.winner = "player"
             log("You won! 🎉", C_GREEN)
 
-gs = GameState()
+gs = None  # created after deck selection
 
-# ── Card layout helpers ───────────────────────────────────────────────────────
-def get_card_positions(n, center_x, y):
-    total = n * CARD_W + (n-1) * CARD_GAP
-    start = center_x - total // 2
-    return [(start + i*(CARD_W+CARD_GAP), y) for i in range(n)]
+# ── Deck Select Screen ────────────────────────────────────────────────────────
+DCARD_W, DCARD_H = 200, 300
+DCARD_GAP        = 30
+IMG_W,   IMG_H   = 116, 160
+
+def draw_deck_select(surf, decks, hover_idx, scroll, deck_images, mx, my):
+    surf.fill(C_BG)
+
+    # Background grid
+    for gx in range(0, W, 60):
+        pygame.draw.line(surf, (25,18,40), (gx, 0), (gx, H))
+    for gy in range(0, H, 60):
+        pygame.draw.line(surf, (25,18,40), (0, gy), (W, gy))
+
+    # Title
+    draw_rounded_rect(surf, C_PANEL, (0, 0, W, 60), 0)
+    draw_text(surf, "⚔  CARD DUEL", "title", C_ACCENT, W//2, 8, center=True)
+    draw_text(surf, "Choose your deck", "medium", C_GRAY, W//2, 38, center=True)
+
+    # Deck cards - 5 per row grid
+    DECKS_PER_ROW = 5
+    ROW_H         = DCARD_H + 30
+    start_y       = 100
+
+    for i, deck_info in enumerate(decks):
+        row       = i // DECKS_PER_ROW
+        col       = i  % DECKS_PER_ROW
+        row_count = min(DECKS_PER_ROW, len(decks) - row * DECKS_PER_ROW)
+        total_w   = row_count * (DCARD_W + DCARD_GAP) - DCARD_GAP
+        start_x   = W//2 - total_w//2
+        cx        = start_x + col * (DCARD_W + DCARD_GAP)
+        cy        = start_y + row * ROW_H + scroll
+        hovered   = (hover_idx == i)
+        offset   = -10 if hovered else 0
+
+        # shadow
+        sh = pygame.Surface((DCARD_W, DCARD_H), pygame.SRCALPHA)
+        pygame.draw.rect(sh, (0,0,0,80), (0,0,DCARD_W,DCARD_H), border_radius=14)
+        surf.blit(sh, (cx+6, cy+6+offset))
+
+        # card body
+        border_col = C_ACCENT if hovered else C_CARD_BORDER
+        bg_col     = C_CARD_HOVER if hovered else C_CARD_BG
+        draw_rounded_rect(surf, bg_col, (cx, cy+offset, DCARD_W, DCARD_H), 14, 2, border_col)
+
+        # deck image - centered
+        img = deck_images.get(deck_info["path"])
+        img_x = cx + (DCARD_W - IMG_W) // 2  # ✅ centered
+        if img:
+            scaled = pygame.transform.scale(img, (IMG_W, IMG_H))
+            surf.blit(scaled, (img_x, cy+2+offset))
+        else:
+            # placeholder
+            draw_rounded_rect(surf, C_PANEL2, (img_x, cy+2+offset, IMG_W, IMG_H), 12)
+            draw_text(surf, "🃏", "big", C_ACCENT2, cx+DCARD_W//2, cy+offset+50, center=True)
+
+        # image overlay gradient
+        grad = pygame.Surface((IMG_W, 40), pygame.SRCALPHA)
+        for gy2 in range(40):
+            alpha = int(200 * gy2 / 40)
+            pygame.draw.line(grad, (*C_CARD_BG, alpha), (0, gy2), (IMG_W, gy2))
+        surf.blit(grad, (img_x, cy+offset+IMG_H-38))
+
+        # deck name - truncate with "..." if too long ✅
+        name = deck_info["name"]
+        if fonts["medium"].size(name)[0] > DCARD_W - 10:
+            while fonts["medium"].size(name + "...")[0] > DCARD_W - 10 and name:
+                name = name[:-1]
+            name += "..."
+        draw_text(surf, name, "medium", C_ACCENT,
+                  cx + DCARD_W//2, cy + offset + IMG_H + 8, center=True)
+
+        # card count
+        draw_text(surf, f"{deck_info['card_count']} cards", "small", C_GRAY,
+                  cx + DCARD_W//2, cy + offset + IMG_H + 36, center=True)
+
+        # unique card types
+        unique = len(deck_info["cards"])
+        draw_text(surf, f"{unique} unique types", "small", C_GRAY,
+                  cx + DCARD_W//2, cy + offset + IMG_H + 54, center=True)
+
+        # select button
+        btn_y = cy + offset + DCARD_H - 44
+        btn_hovered = pygame.Rect(cx+10, btn_y, DCARD_W-20, 34).collidepoint(mx, my)
+        draw_button(surf, "▶  Select", cx+10, btn_y, DCARD_W-20, 34, btn_hovered)
+
+    # scroll hint if more than one row
+    num_rows = (len(decks) + DECKS_PER_ROW - 1) // DECKS_PER_ROW
+    if num_rows > 1:
+        draw_text(surf, "▲ ▼  scroll", "small", C_GRAY, W//2, H-30, center=True)
+
+def deck_select_loop():
+    global selected_deck_path
+
+    # If deck was given via -d arg, skip this screen
+    if selected_deck_path:
+        load_deck(selected_deck_path)
+        return
+
+    decks = get_all_decks()
+    if not decks:
+        # No decks found, try default
+        fallback = "decks/default_deck.json"
+        if os.path.exists(fallback):
+            load_deck(fallback)
+            return
+        else:
+            print("No decks found in decks/ folder!")
+            pygame.quit()
+            sys.exit()
+
+    # Preload images
+    deck_images = {}
+    for d in decks:
+        deck_images[d["path"]] = get_deck_image(d["path"])
+
+    scroll    = 0
+    hover_idx = -1
+    running   = True
+
+    while running:
+        dt = clock.tick(FPS)
+        mx, my = pygame.mouse.get_pos()
+
+        # hover detection - grid layout
+        DECKS_PER_ROW = 5
+        ROW_H         = DCARD_H + 30
+        hover_idx     = -1
+        for i, _ in enumerate(decks):
+            row       = i // DECKS_PER_ROW
+            col       = i  % DECKS_PER_ROW
+            row_count = min(DECKS_PER_ROW, len(decks) - row * DECKS_PER_ROW)
+            total_w   = row_count * (DCARD_W + DCARD_GAP) - DCARD_GAP
+            start_x   = W//2 - total_w//2
+            cx        = start_x + col * (DCARD_W + DCARD_GAP)
+            cy        = 100 + row * ROW_H + scroll
+            if pygame.Rect(cx, cy, DCARD_W, DCARD_H).collidepoint(mx, my):
+                hover_idx = i
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                if event.button == 1:
+                    for i, deck_info in enumerate(decks):
+                        row       = i // DECKS_PER_ROW
+                        col       = i  % DECKS_PER_ROW
+                        row_count = min(DECKS_PER_ROW, len(decks) - row * DECKS_PER_ROW)
+                        total_w   = row_count * (DCARD_W + DCARD_GAP) - DCARD_GAP
+                        start_x   = W//2 - total_w//2
+                        cx        = start_x + col * (DCARD_W + DCARD_GAP)
+                        cy        = 100 + row * ROW_H + scroll
+                        btn_y     = cy + DCARD_H - 44
+                        if pygame.Rect(cx+10, btn_y, DCARD_W-20, 34).collidepoint(mx, my):
+                            load_deck(deck_info["path"])
+                            selected_deck_path = deck_info["path"]
+                            return
+                # scroll with mouse wheel
+                if event.button == 4: scroll += 60
+                if event.button == 5: scroll -= 60
+
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_UP:   scroll += 60
+                if event.key == pygame.K_DOWN: scroll -= 60
+
+        draw_deck_select(screen, decks, hover_idx, scroll, deck_images, mx, my)
+        pygame.display.flip()
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
 def main():
-    running = True
+    global gs
+
+    # Show deck select screen first
+    deck_select_loop()
+
+    gs = GameState()
+    running   = True
     hover_idx = -1
 
     while running:
         dt = clock.tick(FPS)
         mx, my = pygame.mouse.get_pos()
 
-        # ── Events ──
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
 
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                # Card click
-                if gs.phase == "player":
+
+                # ── GAME OVER ──
+                if gs.phase == "gameover":
+                    # Play Again
+                    if pygame.Rect(W//2-80, H//2+60, 160, 44).collidepoint(mx, my):
+                        gs.reset()
+                    # Change Deck
+                    if pygame.Rect(W//2-80, H//2+115, 160, 44).collidepoint(mx, my):
+                        selected_deck_path_backup = selected_deck_path
+                        deck_select_loop()
+                        gs.reset()
+
+                # ── PLAYER TURN ──
+                elif gs.phase == "player":
                     positions = get_card_positions(len(gs.player_cards), W//2, H - CARD_H - 20)
                     for i, (cx, cy) in enumerate(positions):
                         if pygame.Rect(cx, cy, CARD_W, CARD_H).collidepoint(mx, my):
@@ -501,29 +714,17 @@ def main():
                                 else:
                                     gs.selected_cards.append(i)
 
-                    # Button: End Turn
-                    if pygame.Rect(W-170, H//2-30, 150, 40).collidepoint(mx, my):
-                        if gs.phase == "player":
-                            gs.end_player_turn()
-
-                    # Button: Play Selected
-                    if pygame.Rect(W-170, H//2+20, 150, 40).collidepoint(mx, my):
-                        if gs.phase == "player" and gs.selected_cards:
+                    bx = W - 170
+                    if pygame.Rect(bx, H//2-30, 150, 40).collidepoint(mx, my):
+                        gs.end_player_turn()
+                    if pygame.Rect(bx, H//2+20, 150, 40).collidepoint(mx, my):
+                        if gs.selected_cards:
                             gs.play_selected()
+                    if len(gs.cards_to_play) == 0:
+                        if pygame.Rect(bx, H//2+70, 150, 40).collidepoint(mx, my):
+                            gs.draw_card_action()
 
-                    # Button: Draw
-                    played_any = len(gs.cards_to_play) > 0
-                    if not played_any:
-                        if pygame.Rect(W-170, H//2+70, 150, 40).collidepoint(mx, my):
-                            if gs.phase == "player":
-                                gs.draw_card_action()
-
-                    # Gameover restart
-                    if gs.phase == "gameover":
-                        if pygame.Rect(W//2-80, H//2+60, 160, 44).collidepoint(mx, my):
-                            gs.reset()
-
-        # ── AI turn processing ──
+        # ── AI processing ──
         if gs.phase == "ai":
             gs.ai_action_timer += dt
             if gs.ai_action_timer > 700:
@@ -536,7 +737,7 @@ def main():
             if ft.life <= 0:
                 float_texts.remove(ft)
 
-        # ── Hover detection ──
+        # ── Hover ──
         hover_idx = -1
         if gs.phase == "player":
             positions = get_card_positions(len(gs.player_cards), W//2, H - CARD_H - 20)
@@ -544,111 +745,95 @@ def main():
                 if pygame.Rect(cx, cy, CARD_W, CARD_H).collidepoint(mx, my):
                     hover_idx = i
 
-        # ════════════════════════════
+        # ════════════════════════
         #  DRAW
-        # ════════════════════════════
+        # ════════════════════════
         screen.fill(C_BG)
 
-        # ── Background grid ──
         for gx in range(0, W, 60):
             pygame.draw.line(screen, (25,18,40), (gx, 0), (gx, H))
         for gy in range(0, H, 60):
             pygame.draw.line(screen, (25,18,40), (0, gy), (W, gy))
 
-        # ── Title bar ──
         draw_rounded_rect(screen, C_PANEL, (0, 0, W, 44), 0)
         draw_text(screen, "⚔  CARD DUEL", "title", C_ACCENT, W//2, 6, center=True)
-        deck_name = DECK_JSON.get("NAME", "DECK")
-        draw_text(screen, deck_name, "small", C_GRAY, W-10, 14, right=True)
+        draw_text(screen, DECK_JSON.get("NAME", "DECK"), "small", C_GRAY, W-10, 14, right=True)
 
-        # ── Stats panels ──
         draw_stats_panel(screen, 20, 60, 200, "YOU",
                          gs.player_health, DEFAULT_HEALTH,
                          gs.player_shield, gs.player_poison, is_player=True)
-
         draw_stats_panel(screen, W-220, 60, 200, "OPPONENT",
                          gs.ai_health, DEFAULT_HEALTH,
                          gs.ai_shield, gs.ai_poison, is_player=False)
 
-        # ── Energy display ──
         draw_rounded_rect(screen, C_PANEL, (W//2-60, 60, 120, 50), 10, 1, C_ACCENT2)
         draw_text(screen, "ENERGY", "small", C_GRAY, W//2, 65, center=True)
         ecol = C_ACCENT if gs.player_energy > 0 else C_RED
         draw_text(screen, f"{gs.player_energy} / 2", "medium", ecol, W//2, 80, center=True)
 
-        # ── Phase label ──
         phase_text = "YOUR TURN" if gs.phase == "player" else ("OPPONENT'S TURN" if gs.phase == "ai" else "GAME OVER")
-        phase_col  = C_ACCENT   if gs.phase == "player" else (C_ACCENT2        if gs.phase == "ai" else C_RED)
+        phase_col  = C_ACCENT   if gs.phase == "player" else (C_ACCENT2 if gs.phase == "ai" else C_RED)
         draw_text(screen, phase_text, "medium", phase_col, W//2, 120, center=True)
 
-        # ── AI cards (face down) ──
         ai_positions = get_card_positions(len(gs.ai_cards), W//2, 260)
-        for i, (cx, cy) in enumerate(ai_positions):
+        for cx, cy in ai_positions:
             draw_rounded_rect(screen, C_PANEL2, (cx, cy, CARD_W, CARD_H), 10, 2, C_ACCENT2)
             pygame.draw.rect(screen, C_CARD_BORDER, (cx+2, cy+2, CARD_W-4, 4), border_radius=3)
-            # pattern
             for row in range(3, CARD_H-10, 15):
                 for col2 in range(3, CARD_W-10, 15):
                     pygame.draw.circle(screen, C_PANEL, (cx+col2, cy+row), 2)
             draw_text(screen, "?", "title", C_ACCENT2, cx+CARD_W//2, cy+CARD_H//2-20, center=True)
 
-        # ── Player cards ──
-        positions = get_card_positions(len(gs.player_cards), W//2, H - CARD_H - 20)
+        positions  = get_card_positions(len(gs.player_cards), W//2, H - CARD_H - 20)
         played_any = len(gs.cards_to_play) > 0
         for i, (cx, cy) in enumerate(positions):
             card     = gs.player_cards[i]
             hovered  = (hover_idx == i)
             selected = (i in gs.selected_cards)
             playable = gs.can_play(card) and gs.phase == "player"
-            # lift hovered/selected card
-            offset = -18 if (hovered or selected) else 0
+            offset   = -18 if (hovered or selected) else 0
             draw_card(screen, card, cx, cy + offset, hovered, selected, i, playable)
 
-        # ── Buttons ──
         if gs.phase == "player":
             bx = W - 170
-            draw_button(screen, "▶  End Turn",     bx, H//2-30, 150, 40,
+            draw_button(screen, "▶  End Turn",   bx, H//2-30, 150, 40,
                         pygame.Rect(bx, H//2-30, 150, 40).collidepoint(mx, my))
-            play_disabled = len(gs.selected_cards) == 0
-            draw_button(screen, "⚔  Play Cards",   bx, H//2+20, 150, 40,
+            draw_button(screen, "⚔  Play Cards", bx, H//2+20, 150, 40,
                         pygame.Rect(bx, H//2+20, 150, 40).collidepoint(mx, my),
-                        play_disabled)
-            draw_disabled = played_any
-            draw_button(screen, "🃏  Draw Card",    bx, H//2+70, 150, 40,
+                        len(gs.selected_cards) == 0)
+            draw_button(screen, "🃏  Draw Card",  bx, H//2+70, 150, 40,
                         pygame.Rect(bx, H//2+70, 150, 40).collidepoint(mx, my),
-                        draw_disabled)
+                        played_any)
 
-        # ── Selected card preview ──
         if gs.selected_cards and gs.phase == "player":
-            px = 240
-            draw_rounded_rect(screen, C_PANEL, (px, 60, 180, 30), 8, 1, C_ACCENT)
             names = [gs.player_cards[i].name for i in gs.selected_cards]
-            draw_text(screen, "▸ " + ", ".join(names), "small", C_ACCENT, px+10, 69)
+            draw_rounded_rect(screen, C_PANEL, (240, 60, 180, 30), 8, 1, C_ACCENT)
+            draw_text(screen, "▸ " + ", ".join(names), "small", C_ACCENT, 250, 69)
 
-        # ── Log ──
         draw_log(screen, 20, H-160, 300, 150)
 
-        # ── Float texts ──
         for ft in float_texts:
             ft.draw(screen)
 
-        # ── Game over overlay ──
+        # Game over overlay
         if gs.phase == "gameover":
             overlay = pygame.Surface((W, H), pygame.SRCALPHA)
             overlay.fill((0, 0, 0, 160))
             screen.blit(overlay, (0, 0))
 
             if gs.winner == "player":
-                draw_text(screen, "VICTORY!", "big", C_ACCENT, W//2, H//2-60, center=True)
-                draw_text(screen, "You defeated your opponent!", "medium", C_GREEN, W//2, H//2, center=True)
+                draw_text(screen, "VICTORY!",                    "big",    C_ACCENT, W//2, H//2-70, center=True)
+                draw_text(screen, "You defeated your opponent!", "medium", C_GREEN,  W//2, H//2,    center=True)
             else:
-                draw_text(screen, "DEFEAT", "big", C_RED, W//2, H//2-60, center=True)
-                draw_text(screen, "You have been defeated!", "medium", C_GRAY, W//2, H//2, center=True)
+                draw_text(screen, "DEFEAT",                      "big",    C_RED,    W//2, H//2-70, center=True)
+                draw_text(screen, "You have been defeated!",     "medium", C_GRAY,   W//2, H//2,    center=True)
 
-            restart_rect = pygame.Rect(W//2-80, H//2+60, 160, 44)
-            draw_button(screen, "▶  Play Again", restart_rect.x, restart_rect.y,
-                        restart_rect.w, restart_rect.h,
-                        restart_rect.collidepoint(mx, my))
+            draw_button(screen, "▶  Play Again",
+                        W//2-80, H//2+60, 160, 44,
+                        pygame.Rect(W//2-80, H//2+60, 160, 44).collidepoint(mx, my))
+            draw_button(screen, "🃏  Change Deck",
+                        W//2-80, H//2+115, 160, 44,
+                        pygame.Rect(W//2-80, H//2+115, 160, 44).collidepoint(mx, my))
 
         pygame.display.flip()
 

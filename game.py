@@ -16,9 +16,9 @@ if args.deck:
         deck=args.deck
     else:
         print(f"Deck file {args.deck} doesn't exists!")
-        deck="default_deck.json"
+        deck="decks/default_deck.json"
 else:
-    deck="default_deck.json"
+    deck="decks/default_deck.json"
 
 if args.health:
     DEFAULT_HEALTH = args.health
