@@ -474,7 +474,7 @@ class GameState:
 
     def end_turn(self):
         self.player_shield = 0
-        #self.ai_shield     = 0 
+        self.ai_shield     = 0
         self.cards_to_play = []
         self.selected_cards= []
 
@@ -698,7 +698,8 @@ def main():
                         gs.reset()
                     # Change Deck
                     if pygame.Rect(W//2-80, H//2+115, 160, 44).collidepoint(mx, my):
-                        selected_deck_path_backup = selected_deck_path
+                        global selected_deck_path
+                        selected_deck_path = None  # ✅ global'i değiştir
                         deck_select_loop()
                         gs.reset()
 
